@@ -31,6 +31,16 @@ CREATE TABLE IF NOT EXISTS shipments (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     batch_no TEXT NOT NULL UNIQUE REFERENCES batches(batch_no)
 );
+-- 一份账只保留一组化验：单行（id=1）记录示踪进料批
+CREATE TABLE IF NOT EXISTS lab_group (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    tracer_batch TEXT NOT NULL REFERENCES batches(batch_no)
+);
+CREATE TABLE IF NOT EXISTS lab_sheets (
+    sheet_no TEXT PRIMARY KEY,
+    batch_no TEXT NOT NULL REFERENCES batches(batch_no),
+    grams    INTEGER NOT NULL CHECK (grams >= 0)
+);
 """
 
 

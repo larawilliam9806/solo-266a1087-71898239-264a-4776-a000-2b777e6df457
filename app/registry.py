@@ -5,6 +5,7 @@
 from collections import deque
 
 from .db import connect
+from .labtest import compute_conclusion, load_group, pending_sheets
 from .state import load_state
 
 
@@ -54,6 +55,12 @@ def register_documents(documents) -> dict:
     try:
         conn.execute("BEGIN IMMEDIATE")
         state = load_state(conn)
+
+        # 已提交的化验单组：登记前后各核一次，回执附上补齐来源的单号与新结论
+        group = load_group(conn)
+        pre_pending = set()
+        if group is not None:
+            pre_pending = set(pending_sheets(state, group["sheets"])[0])
 
         weights = dict(state.weights)
         sources = {}                       # batch -> ("incoming", None) | ("process", pid)
@@ -143,14 +150,31 @@ def register_documents(documents) -> dict:
             sid = conn.execute("INSERT INTO shipments(batch_no) VALUES (?)", (b,)).lastrowid
             shipment_ids.append(sid)
 
+        # 化验核对只读不改：即使整组转为冲突，合规登记也照常入账
+        lab_review = None
+        if group is not None:
+            try:
+                post_state = load_state(conn)
+                conclusion = compute_conclusion(post_state, group)
+                lab_review = {
+                    "resolved_sheets": sorted(
+                        pre_pending - set(conclusion["pending_sheets"])),
+                    "conclusion": conclusion,
+                }
+            except Exception:
+                lab_review = None
+
         conn.commit()
-        return {
+        result = {
             "applied": True,
             "batches_created": sorted(new_batches),
             "incoming_registered": sorted(new_incoming),
             "process_ids": process_ids,
             "shipment_ids": shipment_ids,
         }
+        if lab_review is not None:
+            result["lab_review"] = lab_review
+        return result
     except Exception:
         conn.rollback()
         raise

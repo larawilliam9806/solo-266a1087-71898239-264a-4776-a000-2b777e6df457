@@ -56,3 +56,23 @@ Document = Annotated[Union[IncomingDoc, ProcessDoc, ShipmentDoc],
 class RegisterRequest(BaseModel):
     """一次登记：可含多张单据，全部校验通过才落库，否则整次不生效。"""
     documents: List[Document] = Field(min_length=1)
+
+
+class LabSheet(BaseModel):
+    """一张化验单：单号、已登记的被测批号、实测的该料克数。"""
+    sheet_no: BatchNo
+    batch: BatchNo
+    grams: Annotated[int, Field(ge=0, description="实测该料克数，非负整数")]
+
+
+class LabGroupRequest(BaseModel):
+    """整组提交（或换交）化验单：指定已登记的示踪进料批号，整组原子替换旧组。"""
+    tracer_batch: BatchNo
+    sheets: List[LabSheet] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self):
+        nos = [s.sheet_no for s in self.sheets]
+        if len(set(nos)) != len(nos):
+            raise ValueError("化验单号重复")
+        return self

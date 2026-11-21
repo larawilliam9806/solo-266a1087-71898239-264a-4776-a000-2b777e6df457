@@ -5,6 +5,11 @@
 查出各已发批可能含该进料的**最少/最多克数**，两个极值各附一份符合整条链称重记录的
 克数分配，供逐道核对。
 
+另提供**示踪化验核对**：混炼料分装后，几张化验单各自对得上称重，合起来却可能
+多算进料。整组提交化验单（指定示踪进料批号），服务判定这组实测读数能否用同一份
+符合批重和工序守恒的整数克分配解释——相容返回共同分配，冲突返回一小组无法同时
+成立的单号。
+
 ## 启动
 
 ```bash
@@ -86,6 +91,59 @@ SQLite 数据文件落在命名卷 `trace-data`（容器内 `/data/app.db`，可
   查询即可得到结果。
 - `404`：批号不存在；`400`：批号不是进料批。
 
+### `POST /api/lab-tests` — 整组提交（换交）示踪化验单
+
+一份账**只保留一组**化验：每次提交整组替换旧组，**原子生效**（校验或写入失败时
+保留原单据与结论）。提交时指定**已登记的示踪进料批号**，每张单填写单号、已登记的
+被测批号和实测的该料克数（非负整数）：
+
+```json
+{
+  "tracer_batch": "A",
+  "sheets": [
+    {"sheet_no": "D1", "batch": "B",  "grams": 900},
+    {"sheet_no": "D2", "batch": "S1", "grams": 400}
+  ]
+}
+```
+
+- `200`：整组落库，返回 `replaced`（是否替换了旧组）与本次核对 `conclusion`。
+- `404`：示踪进料批号不存在；`400`：该批号不是进料批；
+  `422`：被测批号未登记、单号重复、克数非法等（原组保留）。
+
+### `GET /api/lab-tests` — 查询化验单组与核对结论
+
+返回当前单组（`sheets`）与结论（`conclusion`）。每次查询的化验单、料流和结论
+都来自**同一个已入账的状态**（单事务读取）。`404`：尚未提交。
+
+结论结构：
+
+```json
+{
+  "status": "consistent",
+  "checked_sheets": ["D1"],
+  "pending_sheets": ["D2"],
+  "missing_batches": ["Y"],
+  "allocation": {"batch_grams": {"A": 1000, "B": 900, "C": 100},
+                 "processes": [{"process_id": 1,
+                                "input_grams":  {"A": 1000, "X": 0},
+                                "output_grams": {"B": 900, "C": 100}}]},
+  "conflict_sheets": []
+}
+```
+
+- **待核（pending）**：被测批上游缺来源时，该单不参与本次判定，结论列出
+  `pending_sheets`（待核单号）与 `missing_batches`（待补批号）；其余读数照常判定。
+- **相容（consistent）**：其余读数能用同一份符合批重和工序守恒的整数克分配解释，
+  `allocation` 给出这份共同分配（逐批克数 + 逐工序投入/产出克数，可逐道核对）。
+  示踪进料批的全部克数进入链路，批号容量为其称重，工序投入=产出守恒。
+- **冲突（conflict）**：`conflict_sheets` 列出一小组无法同时成立的单号——
+  移除其中任一张，剩下的即相容（包含极小的不可行子集）。
+- **补单回执**：化验单组存在时，`POST /api/documents` 的回执附 `lab_review`
+  （本次补齐来源的化验单号 `resolved_sheets` + 整组新结论 `conclusion`）。
+  合规的生产补单**即使让化验转为冲突也照常入账**；核对未完成时，无关批次的
+  登记也能先办完。
+
 ### 辅助查询
 
 - `GET /api/batches` / `GET /api/batches/{batch_no}`：批号列表 / 单个批号的重量、
@@ -116,11 +174,12 @@ curl localhost:8000/api/trace/A
 app/
   main.py      路由
   models.py    单据结构校验（正整数克、工序平衡等）
-  registry.py  登记：一致性/唯一性/循环校验 + 单事务落库
+  registry.py  登记：一致性/唯一性/循环校验 + 单事务落库（补单回执附化验新结论）
   trace.py     追溯：影响面展开、缺单检查、上下界与分配单
-  flow.py      最小费用流（SPFA 增广）
+  labtest.py   化验核对：待核检查、可行循环流判定、共同分配、冲突极小单组
+  flow.py      最大流（Edmonds-Karp）与最小费用流（SPFA 增广）
   db.py        SQLite 连接与建表
   state.py     账簿状态载入
-tests/test_api.py
+tests/test_api.py / tests/test_labtest.py
 Dockerfile / docker-compose.yml
 ```

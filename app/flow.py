@@ -24,6 +24,41 @@ def add_edge(g, u, v, cap, cost):
     g[v].append(_Edge(u, 0, -cost, len(g[u]) - 1))
 
 
+def max_flow(g, s, t):
+    """Edmonds-Karp 最大流（BFS 增广），返回 s->t 最大流量。
+
+    边上流量 = 加边时的容量 - 当前剩余容量（调用方自行记录句柄）。
+    """
+    n = len(g)
+    total = 0
+    while True:
+        prev_v = [-1] * n
+        prev_e = [-1] * n
+        prev_v[s] = s
+        queue = deque([s])
+        while queue and prev_v[t] == -1:
+            u = queue.popleft()
+            for i, e in enumerate(g[u]):
+                if e.cap > 0 and prev_v[e.to] == -1:
+                    prev_v[e.to] = u
+                    prev_e[e.to] = i
+                    queue.append(e.to)
+        if prev_v[t] == -1:
+            return total
+        d = INF
+        v = t
+        while v != s:
+            d = min(d, g[prev_v[v]][prev_e[v]].cap)
+            v = prev_v[v]
+        v = t
+        while v != s:
+            e = g[prev_v[v]][prev_e[v]]
+            e.cap -= d
+            g[v][e.rev].cap += d
+            v = prev_v[v]
+        total += d
+
+
 def min_cost_flow(g, s, t, amount):
     """从 s 向 t 推送 amount 单位流量，返回最小总费用；不可行返回 None。"""
     n = len(g)
